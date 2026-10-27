@@ -5,8 +5,10 @@ Restart Inkscape
 Closes Inkscape and opens it again with the file that was active, for
 example to load changed extensions.
 
-Inkscape is closed with its own Quit, so it still asks about unsaved
-changes; if you cancel there, nothing else happens. A small helper, started
+Every open window's document is saved first (Inkscape's own Save, as with
+Ctrl+S), then Inkscape is closed with its own Quit. A new document that has
+never been saved gets Inkscape's Save As dialog; if it is still unsaved,
+Quit asks about it, and Cancel there stops the restart. A small helper, started
 detached, waits for this script to finish, asks Inkscape to quit, waits for
 it to close (up to WAIT_FOR_EXIT seconds), then starts Inkscape again with
 the file. Only the active document is reopened. An unsaved new document has
@@ -90,6 +92,26 @@ def alive(pid):
     return True
 
 
+def save_all(conn, name):
+    """Run Inkscape's Save (win.document-save) in every open window."""
+    from gi.repository import Gio, GLib
+    base = '/' + name.replace('.', '/') + '/window'
+    try:
+        xml = conn.call_sync(name, base, 'org.freedesktop.DBus.Introspectable', 'Introspect',
+                             None, GLib.VariantType('(s)'), Gio.DBusCallFlags.NONE, 5000, None)[0]
+    except Exception:
+        return
+    import re
+    for node in re.findall(r'<node name="(\d+)"', xml):
+        try:
+            conn.call_sync(name, f'{base}/{node}', 'org.gtk.Actions', 'Activate',
+                           GLib.Variant('(sava{sv})', ('document-save', [], {})),
+                           None, Gio.DBusCallFlags.NONE, -1, None)
+        except Exception:
+            pass
+
+
+
 def helper(script_pid, inkscape_pid, tag, path):
     """Runs detached: quit Inkscape, wait, start it again."""
     try:
@@ -105,6 +127,7 @@ def helper(script_pid, inkscape_pid, tag, path):
     name = f'{DBUS_BASE}.{tag}' if tag else DBUS_BASE
     try:
         conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        save_all(conn, name)
         conn.call_sync(name, '/' + name.replace('.', '/'), 'org.gtk.Actions', 'Activate',
                        GLib.Variant('(sava{sv})', ('quit', [], {})),
                        None, Gio.DBusCallFlags.NONE, -1, None)
